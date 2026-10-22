@@ -33,10 +33,10 @@ def process(input_path: Path, config: Config, connection: sqlite3.Connection, lo
         if previous is not None and previous["status"] in TERMINAL_STATUSES:
             logger.info("Omitido %s: estado terminal %s", raw_id, previous["status"])
             continue
-        if not raw_id.isdigit() or int(raw_id) < 1:
+        if not raw_id.isdigit():
             save(connection, {
                 "account_id": raw_id, "status": "INVALID_INPUT", "title": "",
-                "body": "", "error": "Debe ser un entero positivo", "attempts": 0,
+                "body": "", "error": "Debe ser un entero no negativo", "attempts": 0,
             })
             logger.warning("ID inválido: %r", raw_id)
             continue

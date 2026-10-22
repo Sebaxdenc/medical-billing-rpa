@@ -25,8 +25,9 @@ configuran en `config.toml`.
 
 - Los IDs se normalizan quitando espacios y comillas externas. Los repetidos
   se deduplican y producen una sola fila.
-- Un ID vacío, no numérico o menor que 1 se conserva como `INVALID_INPUT` y
-  no genera una llamada HTTP.
+- Un ID vacío o no numérico se conserva como `INVALID_INPUT` y no genera una
+  llamada HTTP. Se aceptan enteros no negativos, incluido `0`; si el recurso
+  no existe, la API determina el resultado mediante `404`.
 - Un 404 es `BUSINESS_NOT_FOUND` y no se reintenta. Los errores de red,
   timeout y respuestas 5xx son técnicos y se reintentan con backoff
   exponencial. Los demás 4xx son errores de negocio no reintentables.
