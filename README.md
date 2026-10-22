@@ -255,6 +255,12 @@ Revisar el nuevo resumen y comprobar que el Excel contiene una fila por cada
 ID único normalizado del CSV. Los `BUSINESS_NOT_FOUND` e `INVALID_INPUT` deben
 quedar visibles y no deben confundirse con una caída del proceso.
 
+La existencia de `output\resultados.xlsx` no garantiza que corresponda al lote
+actual. El Excel anterior se conserva si la ejecución se interrumpe antes de
+generar el nuevo reporte. Antes de entregarlo, verificar siempre el log y el
+resumen de la ejecución actual; si no existe un resumen final, el archivo debe
+considerarse potencialmente obsoleto.
+
 Si el proceso falla nuevamente, conservar los logs de ambas ejecuciones,
 reportar el último estado observado y no eliminar la base de estado. Eso
 permite continuar el diagnóstico sin perder trazabilidad.
@@ -268,6 +274,10 @@ permite continuar el diagnóstico sin perder trazabilidad.
 - La salida se genera al final de la ejecución. La persistencia intermedia está
   en SQLite, por lo que los resultados ya confirmados se conservan aunque el
   proceso se interrumpa antes de escribir el Excel.
+- Si una ejecución se interrumpe antes de escribir el Excel, no se elimina el
+  archivo anterior. Por eso el archivo por sí solo no es una señal suficiente
+  de que el lote actual terminó correctamente; se debe validar el log y el
+  resumen final.
 - El lote se identifica con la fecha local del equipo y un hash del archivo.
   Si el negocio dispone de un identificador oficial de lote, podría sustituir
   esta convención en una evolución posterior.

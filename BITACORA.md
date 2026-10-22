@@ -225,3 +225,24 @@ informa dos métricas: cantidad de IDs distintos que se repitieron y cantidad
 de apariciones adicionales. Así, un ID que aparece tres veces se reporta como
 un ID repetido con dos apariciones adicionales, sin convertir la repetición en
 tres llamadas iguales a la API.
+
+### Mantener un alcance proporcional al reto
+
+Revisé la posibilidad de agregar códigos de salida específicos para el
+Programador de tareas, un archivo externo de estado del reporte, escritura
+atómica del Excel y una guía detallada de agendamiento a las 3:00 a.m.
+Decidí no incorporarlos en esta entrega porque el reto tiene un alcance
+acotado y esas mejoras agregarían infraestructura operativa sin ser necesarias
+para demostrar las capacidades principales: reintentos, clasificación,
+idempotencia, reanudación, logging y consolidación.
+
+Sí dejé documentado el riesgo operativo más importante: como el Excel se
+escribe al final, una interrupción puede dejar visible el archivo del lote
+anterior. Decidí conservarlo porque sigue siendo el último reporte disponible,
+pero el README indica que no debe considerarse vigente solo porque exista;
+hay que revisar el log y el resumen final de la ejecución actual.
+
+Como evolución para un entorno productivo, agregaría códigos de salida para
+alertas del scheduler, escritura atómica y un indicador externo de frescura
+del reporte. Separé esas mejoras futuras del alcance implementado para evitar
+sobreingeniería en el reto.
