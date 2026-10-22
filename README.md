@@ -115,16 +115,32 @@ como `INVALID_INPUT`.
 |---|---|---:|
 | Respuesta correcta con datos | `SUCCESS` | No |
 | API responde `404` | `BUSINESS_NOT_FOUND` | No |
-| Otro error `4xx` | `BUSINESS_ERROR` | No |
+| `400`, `409`, `422` u otro `4xx` funcional | `BUSINESS_ERROR` | No |
+| `401` o `403` | `CONFIGURATION_ERROR` | No |
+| `408 Request Timeout` | `TECHNICAL_FAILED` | Sí |
+| `429 Too Many Requests` | `TECHNICAL_FAILED` | Sí |
 | Timeout o error de conexión | `TECHNICAL_FAILED` | Sí |
 | Respuesta `5xx` | `TECHNICAL_FAILED` | Sí |
 | Respuesta exitosa con JSON inválido | `TECHNICAL_FAILED` | Sí |
 | Entrada vacía/no numérica/negativa | `INVALID_INPUT` | No |
 
-Un `404` es un resultado de negocio: la API respondió correctamente que el
-recurso no existe. Repetirlo no lo hará aparecer y podría generar carga
-innecesaria. En cambio, ante timeout, conexión fallida o `5xx` no se puede
-concluir si el recurso existe, por lo que sí tiene sentido reintentar.
+Todas las respuestas HTTP `4xx` son errores del lado de la solicitud, pero no
+todas tienen la misma acción operativa. Un `404` es un resultado de negocio:
+la API respondió correctamente que el recurso no existe. Los demás errores
+funcionales como `400`, `409` o `422` se agrupan como `BUSINESS_ERROR`.
+
+Un `401` o `403` se informa como `CONFIGURATION_ERROR`, porque normalmente
+indica credenciales, permisos o configuración incorrecta. No se reintenta
+automáticamente: repetir la misma solicitud no corrige esas condiciones y
+podría ocultar un problema de despliegue.
+
+Un `408` puede ser transitorio porque el servidor no completó la solicitud a
+tiempo. Un `429` indica limitación de tráfico, por lo que también puede ser
+transitorio. Ambos se reintentan. Para `429`, si la respuesta contiene el
+header `Retry-After`, se respeta su valor; si no existe o no se puede
+interpretar, se usa el backoff exponencial configurado. Ante timeout de
+cliente, error de conexión o `5xx` tampoco se puede concluir si el recurso
+existe, por lo que sí tiene sentido reintentar.
 
 La política por defecto es de tres intentos totales, con espera exponencial de
 1, 2 y 4 segundos entre intentos. La cantidad y el tiempo inicial son
@@ -171,7 +187,10 @@ Interpretar el resumen así:
 - `SUCCESS`: consulta resuelta correctamente.
 - `BUSINESS_NOT_FOUND`: el ID fue consultado, pero no existe en el sistema
   externo; no es una falla de infraestructura.
-- `BUSINESS_ERROR`: la API respondió un error funcional `4xx`.
+- `BUSINESS_ERROR`: la API respondió un error funcional `4xx`, como `400`,
+  `409` o `422`.
+- `CONFIGURATION_ERROR`: la API rechazó la autenticación o autorización con
+  `401` o `403`; revisar credenciales, permisos o configuración.
 - `INVALID_INPUT`: el CSV contiene un valor que no cumple el formato.
 - `TECHNICAL_FAILED`: la API no pudo responder después de los reintentos.
 

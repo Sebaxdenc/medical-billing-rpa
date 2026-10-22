@@ -3,7 +3,13 @@ from pathlib import Path
 from typing import Iterator
 
 
-TERMINAL_STATUSES = {"SUCCESS", "BUSINESS_NOT_FOUND", "BUSINESS_ERROR", "INVALID_INPUT"}
+TERMINAL_STATUSES = {
+    "SUCCESS",
+    "BUSINESS_NOT_FOUND",
+    "BUSINESS_ERROR",
+    "CONFIGURATION_ERROR",
+    "INVALID_INPUT",
+}
 
 
 def connect(path: Path) -> sqlite3.Connection:

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 import time
 from typing import Callable
 
@@ -12,6 +13,19 @@ class ApiResult:
     body: str = ""
     error: str = ""
     attempts: int = 0
+
+
+def retry_after_seconds(response: requests.Response) -> float | None:
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+        except (TypeError, ValueError, OverflowError):
+            return None
 
 
 def fetch_post(
@@ -33,14 +47,25 @@ def fetch_post(
 
         if response.status_code == 404:
             return ApiResult("BUSINESS_NOT_FOUND", error="HTTP 404", attempts=attempt)
-        if 500 <= response.status_code <= 599:
+        if response.status_code in (401, 403):
+            return ApiResult(
+                "CONFIGURATION_ERROR",
+                error=f"HTTP {response.status_code}",
+                attempts=attempt,
+            )
+        if response.status_code in (408, 429) or 500 <= response.status_code <= 599:
             if attempt == max_attempts:
                 return ApiResult(
                     "TECHNICAL_FAILED",
                     error=f"HTTP {response.status_code}",
                     attempts=attempt,
                 )
-            sleep(backoff_seconds * 2 ** (attempt - 1))
+            delay = (
+                retry_after_seconds(response)
+                if response.status_code == 429
+                else None
+            )
+            sleep(delay if delay is not None else backoff_seconds * 2 ** (attempt - 1))
             continue
         if 400 <= response.status_code <= 499:
             return ApiResult("BUSINESS_ERROR", error=f"HTTP {response.status_code}", attempts=attempt)

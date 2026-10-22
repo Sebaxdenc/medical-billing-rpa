@@ -44,6 +44,15 @@ Lo usé para revisar cómo demostrar la idempotencia, la reanudación y el
 comportamiento de los reintentos, en lugar de dar esas propiedades por
 supuestas.
 
+> me gustaria revisar esto: el resultado de 429 y el 408 de https. El README
+> manda todo "otro 4xx" a `BUSINESS_ERROR` sin reintento. Pero 429 (demasiadas
+> solicitudes) y 408 (timeout) son transitorios y sí tiene sentido
+> reintentarlos.
+
+Este prompt sirvió para revisar la frontera de reintentos con más detalle y no
+tratar todos los códigos `4xx` como si tuvieran la misma causa o acción
+operativa.
+
 ## 3. Algo que la IA entregó mal o incompleto
 
 La primera implementación trató `0` como `INVALID_INPUT` mediante esta regla:
@@ -68,6 +77,24 @@ primer comando tenía un problema de comillas en PowerShell, por lo que no
 llegó a ejecutarse. Se corrigió usando un bloque de código enviado por pipe a
 Python. Esto confirmó que los comandos operativos también deben probarse en el
 entorno real de ejecución y no solo escribirse como texto.
+
+Después revisé otra simplificación inicial: documentar todos los códigos
+`4xx` como `BUSINESS_ERROR` sin reintentos. Eso era demasiado general. Aunque
+todos pertenecen a la familia de errores del lado de la solicitud, no todos
+representan el mismo problema:
+
+- `404` indica que el recurso no existe y se mantiene como
+  `BUSINESS_NOT_FOUND`.
+- `408` puede ser transitorio y se reintenta.
+- `429` indica limitación de tráfico y se reintenta respetando `Retry-After`
+  cuando está disponible.
+- `401` y `403` normalmente indican credenciales, permisos o configuración,
+  por lo que se clasifican como `CONFIGURATION_ERROR` y no se reintentan.
+- Otros `4xx` funcionales se mantienen como `BUSINESS_ERROR` sin reintento.
+
+La corrección se verificó agregando pruebas para `408`, `429` con
+`Retry-After` y `401`, además de actualizar el README para que la
+documentación y el comportamiento real coincidieran.
 
 ## 4. Decisiones propias
 
@@ -103,11 +130,28 @@ para este reto.
 
 Un `404` significa que la API respondió correctamente que no existe el
 recurso; por eso se marca como `BUSINESS_NOT_FOUND` y no se reintenta. En
-cambio, un timeout, un error de conexión o un `5xx` no permite saber si el
-recurso existe: el problema es la disponibilidad del sistema. Esos casos se
-clasifican como técnicos y se reintentan. Esta frontera evita perder tiempo
-repitiendo una respuesta funcional que no cambiará y permite recuperar fallos
-transitorios.
+cambio, un timeout, un error de conexión, un `408`, un `429` o un `5xx` no
+permite saber si el recurso existe o indican una condición temporal del
+servicio. Esos casos se clasifican como técnicos y se reintentan. Esta
+frontera evita perder tiempo repitiendo una respuesta funcional que no
+cambiará y permite recuperar fallos transitorios.
+
+También decidí no agrupar automáticamente `401` y `403` como errores de
+negocio. Aunque son códigos `4xx`, en una ejecución RPA suelen indicar una
+credencial vencida, un token incorrecto, permisos insuficientes o una
+configuración de ambiente incompleta. Por eso se usa el estado
+`CONFIGURATION_ERROR`, que es más accionable para el runbook y no se reintenta
+hasta corregir la causa.
+
+Los códigos `400`, `409`, `422` y otros `4xx` funcionales se mantienen como
+`BUSINESS_ERROR`. Esta categoría se reserva para solicitudes rechazadas por
+reglas funcionales o datos no válidos, donde repetir exactamente la misma
+solicitud no cambiaría la respuesta.
+
+Para `429`, además, se respeta el header `Retry-After` de la API. Si no está
+presente o no se puede interpretar, se aplica el backoff exponencial
+configurado. Así el cliente coopera con el límite de tráfico del servicio en
+lugar de reintentar de forma agresiva.
 
 ### Usar SQLite como fuente de verdad
 
