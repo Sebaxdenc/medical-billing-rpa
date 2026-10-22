@@ -21,10 +21,15 @@ def connect(path: Path) -> sqlite3.Connection:
     }
     if columns and "batch_id" not in columns:
         connection.execute("ALTER TABLE accounts RENAME TO accounts_legacy")
+    elif columns and "appearances" not in columns:
+        connection.execute(
+            "ALTER TABLE accounts ADD COLUMN appearances INTEGER NOT NULL DEFAULT 1"
+        )
     connection.execute(
         """CREATE TABLE IF NOT EXISTS accounts (
             batch_id TEXT NOT NULL,
             account_id TEXT NOT NULL,
+            appearances INTEGER NOT NULL DEFAULT 1,
             status TEXT NOT NULL,
             title TEXT NOT NULL DEFAULT '',
             body TEXT NOT NULL DEFAULT '',
@@ -37,8 +42,8 @@ def connect(path: Path) -> sqlite3.Connection:
     if columns and "batch_id" not in columns:
         connection.execute(
             """INSERT INTO accounts
-            (batch_id, account_id, status, title, body, error, attempts, updated_at)
-            SELECT 'legacy', account_id, status, title, body, error, attempts, updated_at
+            (batch_id, account_id, appearances, status, title, body, error, attempts, updated_at)
+            SELECT 'legacy', account_id, 1, status, title, body, error, attempts, updated_at
             FROM accounts_legacy"""
         )
     connection.commit()
@@ -57,10 +62,11 @@ def get(
 def save(connection: sqlite3.Connection, record: dict[str, object]) -> None:
     connection.execute(
         """INSERT INTO accounts
-        (batch_id, account_id, status, title, body, error, attempts)
-        VALUES (:batch_id, :account_id, :status, :title, :body, :error, :attempts)
+        (batch_id, account_id, appearances, status, title, body, error, attempts)
+        VALUES (:batch_id, :account_id, :appearances, :status, :title, :body, :error, :attempts)
         ON CONFLICT(batch_id, account_id) DO UPDATE SET
-          status=excluded.status, title=excluded.title, body=excluded.body,
+          appearances=excluded.appearances, status=excluded.status,
+          title=excluded.title, body=excluded.body,
           error=excluded.error, attempts=excluded.attempts,
           updated_at=CURRENT_TIMESTAMP""",
         record,

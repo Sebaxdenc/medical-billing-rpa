@@ -81,7 +81,8 @@ python -m rpa_billing --input entradas\cuentas-2026-10-22.csv --config config.to
 Al terminar se generan:
 
 - `output/resultados.xlsx`: reporte con una fila por ID único y las columnas
-  `id_cuenta`, `estado`, `titulo`, `detalle`, `error` e `intentos`.
+  `id_cuenta`, `apariciones`, `estado`, `titulo`, `detalle`, `error` e
+  `intentos`.
 - `runtime/state.db`: estado durable del proceso; es la fuente de verdad para
   reanudar y conserva el histórico de lotes.
 - `logs/run-YYYYMMDD-HHMMSS.log`: detalle de cada ID, omisiones y resumen.
@@ -94,7 +95,11 @@ Los valores se normalizan quitando espacios y comillas externas. Los
 duplicados se deduplican y producen una sola fila y una sola consulta lógica.
 La decisión representa que el resultado depende del identificador, no de
 cuántas veces fue escrito en el CSV. También evita llamadas innecesarias y
-filas duplicadas en el Excel.
+filas duplicadas en el Excel. La columna `apariciones` conserva cuántas veces
+llegó cada ID normalizado. El resumen informa cuántos IDs se repitieron y
+cuántas apariciones adicionales representan. Por ejemplo, un `7` que aparece
+tres veces genera una sola consulta y una sola fila con `apariciones = 3`,
+pero queda marcado como una anomalía para revisión.
 
 ### IDs inválidos y cero
 

@@ -211,3 +211,17 @@ Esta decisión evita dos errores opuestos: repetir llamadas dentro del mismo
 lote y, al mismo tiempo, usar datos viejos de un día anterior. También deja
 explícito en el runbook que no se debe borrar SQLite al relanzar, porque allí
 están tanto el punto de reanudación como el histórico.
+
+### Conservar la frecuencia de IDs repetidos
+
+Decidí mantener la deduplicación operativa, pero agregar el campo
+`apariciones`. Una cuenta repetida puede ser una anomalía real de facturación,
+por ejemplo una radicación doble, por lo que eliminar completamente esa
+información reduciría el valor del reporte para auditoría.
+
+El proceso sigue haciendo una sola llamada y generando una sola fila por ID
+normalizado, pero guarda cuántas veces apareció en el CSV. El resumen también
+informa dos métricas: cantidad de IDs distintos que se repitieron y cantidad
+de apariciones adicionales. Así, un ID que aparece tres veces se reporta como
+un ID repetido con dos apariciones adicionales, sin convertir la repetición en
+tres llamadas iguales a la API.

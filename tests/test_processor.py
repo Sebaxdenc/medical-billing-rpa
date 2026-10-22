@@ -91,3 +91,34 @@ def test_same_account_is_processed_again_in_new_batch(tmp_path: Path) -> None:
         "SELECT COUNT(*) FROM accounts WHERE account_id = '7'"
     ).fetchone()[0] == 2
     connection.close()
+
+
+def test_duplicate_appearances_are_saved_without_duplicate_calls(tmp_path: Path) -> None:
+    input_path = tmp_path / "cuentas.csv"
+    input_path.write_text("id_cuenta\n7\n 7 \n\"7\"\n", encoding="utf-8")
+    config = Config(
+        base_url="https://example.test/posts",
+        timeout_seconds=1,
+        max_attempts=1,
+        backoff_seconds=0,
+        state_db=tmp_path / "state.db",
+        output_xlsx=tmp_path / "result.xlsx",
+        log_dir=tmp_path / "logs",
+        log_level="INFO",
+    )
+    connection = connect(config.state_db)
+    with patch(
+        "rpa_billing.processor.fetch_post",
+        return_value=ApiResult("SUCCESS", title="ok", attempts=1),
+    ) as fetch:
+        repeated_ids, extra_appearances = process(
+            input_path, "batch", config, connection, logging.getLogger("test")
+        )
+    assert fetch.call_count == 1
+    assert (repeated_ids, extra_appearances) == (1, 2)
+    row = connection.execute(
+        "SELECT appearances FROM accounts "
+        "WHERE batch_id = 'batch' AND account_id = '7'"
+    ).fetchone()
+    assert row[0] == 3
+    connection.close()

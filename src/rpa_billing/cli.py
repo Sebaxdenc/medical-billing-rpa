@@ -27,8 +27,12 @@ def main() -> None:
     batch_id = batch_id_for(args.input)
     logger.info("Lote actual: %s", batch_id)
     try:
-        process(args.input, batch_id, config, connection, logger)
+        repeated_ids, extra_appearances = process(
+            args.input, batch_id, config, connection, logger
+        )
         write_excel(connection, config.output_xlsx, batch_id)
-        summarize(connection, batch_id, logger)
+        summarize(
+            connection, batch_id, logger, repeated_ids, extra_appearances
+        )
     finally:
         connection.close()
