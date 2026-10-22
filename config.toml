@@ -1,0 +1,13 @@
+[api]
+base_url = "https://jsonplaceholder.typicode.com/posts"
+timeout_seconds = 10
+max_attempts = 3
+backoff_seconds = 1
+
+[paths]
+state_db = "runtime/state.db"
+output_xlsx = "output/resultados.xlsx"
+log_dir = "logs"
+
+[logging]
+level = "INFO"
