@@ -1,52 +1,229 @@
 # Medical Billing RPA
 
-Proceso batch idempotente para leer `cuentas.csv`, consultar cada cuenta en
-JSONPlaceholder y generar un Excel consolidado.
+Proceso batch para una operación RPA nocturna. Lee los números de cuenta desde
+un CSV, consulta el recurso correspondiente en
+`https://jsonplaceholder.typicode.com/posts/{id}` y genera un Excel consolidado
+para auditoría.
 
-## Requisitos
+El proceso está diseñado para ejecutarse sin supervisión:
 
-- Python 3.11+
-- Dependencias de `requirements.txt`
+- un ID que falla no detiene los demás;
+- los resultados se guardan individualmente;
+- las llamadas exitosas no se repiten al relanzar;
+- el Excel no acumula filas duplicadas;
+- cada ejecución deja log y resumen.
 
-## Ejecución
+## Qué necesita instalado
+
+- Python 3.11 o superior.
+- Acceso de red al endpoint de JSONPlaceholder.
+- Paquetes Python declarados en `requirements.txt`:
+  - `requests`, para las consultas HTTP;
+  - `openpyxl`, para generar el archivo Excel.
+
+SQLite y `tomllib` forman parte de Python, por lo que no requieren un servicio
+externo ni una dependencia adicional.
+
+## Instalación
+
+Desde la raíz del repositorio, en PowerShell:
 
 ```powershell
-python -m venv .venv
+py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+La instalación editable permite ejecutar el paquete `rpa_billing` directamente
+con `python -m`.
+
+## Entrada y configuración
+
+El archivo de entrada por defecto es `cuentas.csv` y debe tener una columna
+llamada `id_cuenta`. El lector tolera espacios alrededor del valor, comillas
+externas y líneas vacías.
+
+La configuración operativa está fuera del código, en `config.toml`:
+
+```toml
+[api]
+base_url = "https://jsonplaceholder.typicode.com/posts"
+timeout_seconds = 10
+max_attempts = 3
+backoff_seconds = 1
+
+[paths]
+state_db = "runtime/state.db"
+output_xlsx = "output/resultados.xlsx"
+log_dir = "logs"
+```
+
+Se pueden cambiar la URL, timeout, cantidad de intentos, backoff y rutas sin
+modificar la lógica del proceso.
+
+## Cómo se ejecuta
+
+Con la configuración y nombres por defecto:
+
+```powershell
 python -m rpa_billing --input cuentas.csv --config config.toml
 ```
 
-La salida queda en `output/resultados.xlsx`, el estado durable en
-`runtime/state.db` y el log en `logs/`. Las rutas, timeout y reintentos se
-configuran en `config.toml`.
+También se pueden pasar otros archivos:
+
+```powershell
+python -m rpa_billing --input entradas\cuentas-2026-10-22.csv --config config.toml
+```
+
+Al terminar se generan:
+
+- `output/resultados.xlsx`: reporte con una fila por ID único y las columnas
+  `id_cuenta`, `estado`, `titulo`, `detalle`, `error` e `intentos`.
+- `runtime/state.db`: estado durable del proceso; es la fuente de verdad para
+  reanudar.
+- `logs/run-YYYYMMDD-HHMMSS.log`: detalle de cada ID, omisiones y resumen.
 
 ## Decisiones funcionales
 
-- Los IDs se normalizan quitando espacios y comillas externas. Los repetidos
-  se deduplican y producen una sola fila.
-- Un ID vacío o no numérico se conserva como `INVALID_INPUT` y no genera una
-  llamada HTTP. Se aceptan enteros no negativos, incluido `0`; si el recurso
-  no existe, la API determina el resultado mediante `404`.
-- Un 404 es `BUSINESS_NOT_FOUND` y no se reintenta. Los errores de red,
-  timeout y respuestas 5xx son técnicos y se reintentan con backoff
-  exponencial. Los demás 4xx son errores de negocio no reintentables.
-- SQLite es la fuente de verdad. El Excel se reconstruye desde SQLite en
-  cada ejecución; por eso no duplica filas ni repite llamadas exitosas.
+### IDs repetidos
 
-## Runbook de madrugada
+Los valores se normalizan quitando espacios y comillas externas. Los
+duplicados se deduplican y producen una sola fila y una sola consulta lógica.
+La decisión representa que el resultado depende del identificador, no de
+cuántas veces fue escrito en el CSV. También evita llamadas innecesarias y
+filas duplicadas en el Excel.
 
-1. Revisar el resumen final y `logs/` para identificar estados por causa.
-2. Si hubo errores técnicos, verificar conectividad y disponibilidad de la API
-   y relanzar el mismo comando.
-3. Validar que `output/resultados.xlsx` existe y contiene los IDs únicos del
-   CSV.
-4. No borrar `runtime/state.db` antes de relanzar: repetiría llamadas.
+### IDs inválidos y cero
 
-El proceso es secuencial para mantener el comportamiento simple y auditable.
+Los valores vacíos o no numéricos se conservan como `INVALID_INPUT`, no se
+envían a la API y quedan registrados para auditoría. No se descartan
+silenciosamente.
+
+Se aceptan todos los enteros no negativos, incluido `0`. El programa no
+inventa una regla que obligue a que una cuenta comience en `1`. Si `0` o
+cualquier otro entero no existe en el sistema externo, la respuesta funcional
+la determina la API mediante `404`.
+
+Los valores negativos no cumplen el formato elegido para este reto y quedan
+como `INVALID_INPUT`.
+
+### Estados y frontera de reintentos
+
+| Situación | Estado | Reintenta |
+|---|---|---:|
+| Respuesta correcta con datos | `SUCCESS` | No |
+| API responde `404` | `BUSINESS_NOT_FOUND` | No |
+| Otro error `4xx` | `BUSINESS_ERROR` | No |
+| Timeout o error de conexión | `TECHNICAL_FAILED` | Sí |
+| Respuesta `5xx` | `TECHNICAL_FAILED` | Sí |
+| Respuesta exitosa con JSON inválido | `TECHNICAL_FAILED` | Sí |
+| Entrada vacía/no numérica/negativa | `INVALID_INPUT` | No |
+
+Un `404` es un resultado de negocio: la API respondió correctamente que el
+recurso no existe. Repetirlo no lo hará aparecer y podría generar carga
+innecesaria. En cambio, ante timeout, conexión fallida o `5xx` no se puede
+concluir si el recurso existe, por lo que sí tiene sentido reintentar.
+
+La política por defecto es de tres intentos totales, con espera exponencial de
+1, 2 y 4 segundos entre intentos. La cantidad y el tiempo inicial son
+configurables.
+
+### Idempotencia y reanudación
+
+SQLite guarda cada resultado con `account_id` como clave única. Después de
+resolver cada ID, el resultado se confirma en una transacción independiente.
+Al relanzar:
+
+- los estados terminales (`SUCCESS`, `BUSINESS_NOT_FOUND`, `BUSINESS_ERROR` e
+  `INVALID_INPUT`) se omiten;
+- un `TECHNICAL_FAILED` vuelve a intentarse, porque pudo ser transitorio;
+- los IDs procesados antes de una interrupción no vuelven a llamar a la API;
+- el Excel se reconstruye desde SQLite y no se agregan filas al archivo
+  anterior.
+
+Si la interrupción ocurre durante una llamada, ese ID puede volver a
+intentarse al relanzar. Es intencional: todavía no existía un resultado
+confirmado que guardar.
+
+El proceso es secuencial para mantener trazabilidad y simplificar la
+reanudación. Cada ID se guarda antes de continuar con el siguiente.
+
+## Runbook: falla a las 3:00 a.m.
+
+### 1. Confirmar qué ocurrió
+
+Ubicar el log más reciente:
+
+```powershell
+Get-ChildItem logs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+```
+
+Abrirlo y buscar el `Resumen final`. Si no existe, el proceso probablemente
+fue interrumpido antes de terminar. Revisar también los últimos registros del
+log para identificar el último ID tratado.
+
+### 2. Revisar los estados
+
+Interpretar el resumen así:
+
+- `SUCCESS`: consulta resuelta correctamente.
+- `BUSINESS_NOT_FOUND`: el ID fue consultado, pero no existe en el sistema
+  externo; no es una falla de infraestructura.
+- `BUSINESS_ERROR`: la API respondió un error funcional `4xx`.
+- `INVALID_INPUT`: el CSV contiene un valor que no cumple el formato.
+- `TECHNICAL_FAILED`: la API no pudo responder después de los reintentos.
+
+### 3. Si hay errores técnicos, revisar conectividad
+
+Desde el mismo equipo donde corre el proceso:
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://jsonplaceholder.typicode.com/posts/1" `
+  -TimeoutSec 10
+```
+
+Si falla la conectividad, informar la indisponibilidad y relanzar cuando se
+recupere. Si responde correctamente, continuar con el relanzamiento del
+proceso.
+
+### 4. Relanzar sin borrar el estado
+
+Ejecutar exactamente el mismo comando:
+
+```powershell
+python -m rpa_billing --input cuentas.csv --config config.toml
+```
+
+No borrar `runtime/state.db`: contiene los resultados ya confirmados y permite
+reanudar sin repetir llamadas exitosas. Tampoco es necesario borrar el Excel;
+se reconstruirá al final.
+
+### 5. Validar la entrega
+
+Confirmar que existen:
+
+```powershell
+Test-Path output\resultados.xlsx
+Test-Path runtime\state.db
+```
+
+Revisar el nuevo resumen y comprobar que el Excel contiene una fila por cada
+ID único normalizado del CSV. Los `BUSINESS_NOT_FOUND` e `INVALID_INPUT` deben
+quedar visibles y no deben confundirse con una caída del proceso.
+
+Si el proceso falla nuevamente, conservar los logs de ambas ejecuciones,
+reportar el último estado observado y no eliminar la base de estado. Eso
+permite continuar el diagnóstico sin perder trazabilidad.
 
 ## Limitaciones conocidas
 
-La API de prueba puede cambiar o no estar disponible. No se agregan
-notificaciones externas ni ejecución concurrente porque no son necesarias para
-el alcance del reto.
+- JSONPlaceholder es un servicio de prueba; en producción se reemplazaría
+  `base_url` por el endpoint real y se revisarían sus códigos de respuesta.
+- No se implementan notificaciones externas ni ejecución concurrente. Para el
+  volumen del reto se priorizaron trazabilidad, simplicidad y reanudación.
+- La salida se genera al final de la ejecución. La persistencia intermedia está
+  en SQLite, por lo que los resultados ya confirmados se conservan aunque el
+  proceso se interrumpa antes de escribir el Excel.
