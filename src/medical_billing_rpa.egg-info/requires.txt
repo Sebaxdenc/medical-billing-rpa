@@ -1,2 +1,0 @@
-requests<3,>=2.31
-openpyxl<4,>=3.1

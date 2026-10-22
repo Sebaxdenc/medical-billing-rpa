@@ -5,3 +5,4 @@ runtime/
 logs/
 output/
 .pytest_cache/
+*.egg-info/
