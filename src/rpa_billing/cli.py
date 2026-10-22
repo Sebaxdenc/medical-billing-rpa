@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import load_config
-from .processor import process
+from .processor import batch_id_for, process
 from .report import summarize, write_excel
 from .storage import connect
 
@@ -24,9 +24,11 @@ def main() -> None:
     )
     logger = logging.getLogger("rpa_billing")
     connection = connect(config.state_db)
+    batch_id = batch_id_for(args.input)
+    logger.info("Lote actual: %s", batch_id)
     try:
-        process(args.input, config, connection, logger)
-        write_excel(connection, config.output_xlsx)
-        summarize(connection, logger)
+        process(args.input, batch_id, config, connection, logger)
+        write_excel(connection, config.output_xlsx, batch_id)
+        summarize(connection, batch_id, logger)
     finally:
         connection.close()

@@ -1,4 +1,6 @@
 import csv
+from datetime import date
+import hashlib
 import logging
 import sqlite3
 from pathlib import Path
@@ -27,14 +29,26 @@ def read_unique_ids(path: Path) -> list[str]:
         return result
 
 
-def process(input_path: Path, config: Config, connection: sqlite3.Connection, logger: logging.Logger) -> None:
+def batch_id_for(path: Path, batch_date: date | None = None) -> str:
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    return f"{batch_date or date.today():%Y-%m-%d}-{digest}"
+
+
+def process(
+    input_path: Path,
+    batch_id: str,
+    config: Config,
+    connection: sqlite3.Connection,
+    logger: logging.Logger,
+) -> None:
     for raw_id in read_unique_ids(input_path):
-        previous = get(connection, raw_id)
+        previous = get(connection, batch_id, raw_id)
         if previous is not None and previous["status"] in TERMINAL_STATUSES:
             logger.info("Omitido %s: estado terminal %s", raw_id, previous["status"])
             continue
         if not raw_id.isdigit():
             save(connection, {
+                "batch_id": batch_id,
                 "account_id": raw_id, "status": "INVALID_INPUT", "title": "",
                 "body": "", "error": "Debe ser un entero no negativo", "attempts": 0,
             })
@@ -45,6 +59,7 @@ def process(input_path: Path, config: Config, connection: sqlite3.Connection, lo
             config.max_attempts, config.backoff_seconds,
         )
         save(connection, {
+            "batch_id": batch_id,
             "account_id": raw_id, "status": result.status, "title": result.title,
             "body": result.body, "error": result.error, "attempts": result.attempts,
         })

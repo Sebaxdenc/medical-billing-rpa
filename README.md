@@ -10,7 +10,8 @@ El proceso está diseñado para ejecutarse sin supervisión:
 - un ID que falla no detiene los demás;
 - los resultados se guardan individualmente;
 - las llamadas exitosas no se repiten al relanzar;
-- el Excel no acumula filas duplicadas;
+- el Excel contiene únicamente el lote/CSV actual y no acumula filas de días
+  anteriores;
 - cada ejecución deja log y resumen.
 
 ## Qué necesita instalado
@@ -82,7 +83,7 @@ Al terminar se generan:
 - `output/resultados.xlsx`: reporte con una fila por ID único y las columnas
   `id_cuenta`, `estado`, `titulo`, `detalle`, `error` e `intentos`.
 - `runtime/state.db`: estado durable del proceso; es la fuente de verdad para
-  reanudar.
+  reanudar y conserva el histórico de lotes.
 - `logs/run-YYYYMMDD-HHMMSS.log`: detalle de cada ID, omisiones y resumen.
 
 ## Decisiones funcionales
@@ -142,22 +143,37 @@ interpretar, se usa el backoff exponencial configurado. Ante timeout de
 cliente, error de conexión o `5xx` tampoco se puede concluir si el recurso
 existe, por lo que sí tiene sentido reintentar.
 
-La política por defecto es de tres intentos totales, con espera exponencial de
-1, 2 y 4 segundos entre intentos. La cantidad y el tiempo inicial son
-configurables.
+La política por defecto es de tres intentos totales, con dos esperas entre
+ellos: 1 segundo antes del segundo intento y 2 segundos antes del tercero.
+La cantidad de intentos y el tiempo inicial son configurables. Si se agotaran
+cinco intentos, las esperas serían 1, 2, 4 y 8 segundos.
 
 ### Idempotencia y reanudación
 
-SQLite guarda cada resultado con `account_id` como clave única. Después de
-resolver cada ID, el resultado se confirma en una transacción independiente.
-Al relanzar:
+SQLite guarda cada resultado con la clave compuesta `(batch_id, account_id)`.
+El lote se calcula como `YYYY-MM-DD-<hash corto del contenido del CSV>`.
+Después de resolver cada ID, el resultado se confirma en una transacción
+independiente. Al relanzar el mismo archivo el mismo día:
 
-- los estados terminales (`SUCCESS`, `BUSINESS_NOT_FOUND`, `BUSINESS_ERROR` e
-  `INVALID_INPUT`) se omiten;
+- los estados terminales (`SUCCESS`, `BUSINESS_NOT_FOUND`, `BUSINESS_ERROR`,
+  `CONFIGURATION_ERROR` e `INVALID_INPUT`) se omiten;
 - un `TECHNICAL_FAILED` vuelve a intentarse, porque pudo ser transitorio;
 - los IDs procesados antes de una interrupción no vuelven a llamar a la API;
-- el Excel se reconstruye desde SQLite y no se agregan filas al archivo
-  anterior.
+- el Excel se reconstruye desde SQLite filtrando el lote actual.
+
+El alcance del estado es el lote, no el `account_id` global. Si mañana llega
+otra vez la cuenta `7`, tendrá un lote distinto y se consultará nuevamente,
+porque el sistema externo pudo haber cambiado. SQLite conserva ambos
+resultados para auditoría, pero el Excel de mañana contiene solo los IDs del
+CSV de mañana.
+
+El hash hace que relanzar exactamente el mismo archivo el mismo día use el
+mismo lote. La fecha evita reutilizar el resultado de un día anterior aunque
+el contenido del CSV sea idéntico. El formato también permite procesar dos
+archivos con contenidos diferentes el mismo día sin mezclarlos.
+
+Si se ejecuta un CSV nuevo con un lote diferente, el Excel se sobrescribe con
+el reporte de ese lote; no es un reporte histórico acumulado.
 
 Si la interrupción ocurre durante una llamada, ese ID puede volver a
 intentarse al relanzar. Es intencional: todavía no existía un resultado
@@ -216,9 +232,10 @@ Ejecutar exactamente el mismo comando:
 python -m rpa_billing --input cuentas.csv --config config.toml
 ```
 
-No borrar `runtime/state.db`: contiene los resultados ya confirmados y permite
-reanudar sin repetir llamadas exitosas. Tampoco es necesario borrar el Excel;
-se reconstruirá al final.
+No borrar `runtime/state.db`: contiene los resultados ya confirmados de todos
+los lotes y permite reanudar sin repetir llamadas exitosas del lote actual.
+Tampoco es necesario borrar el Excel; se reconstruirá al final con el lote
+actual.
 
 ### 5. Validar la entrega
 
@@ -246,3 +263,6 @@ permite continuar el diagnóstico sin perder trazabilidad.
 - La salida se genera al final de la ejecución. La persistencia intermedia está
   en SQLite, por lo que los resultados ya confirmados se conservan aunque el
   proceso se interrumpa antes de escribir el Excel.
+- El lote se identifica con la fecha local del equipo y un hash del archivo.
+  Si el negocio dispone de un identificador oficial de lote, podría sustituir
+  esta convención en una evolución posterior.

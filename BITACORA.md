@@ -171,10 +171,12 @@ proceso dos veces.
 
 ### Usar reintentos limitados con backoff exponencial
 
-La configuración usa tres intentos totales y esperas de `1`, `2` y `4`
-segundos entre intentos, con parámetros fuera del código. El límite evita que
-un endpoint caído bloquee indefinidamente el proceso nocturno. El backoff
-reduce la presión sobre el servicio externo y da tiempo para que se recupere.
+La configuración usa tres intentos totales y dos esperas entre ellos:
+`1` segundo antes del segundo intento y `2` segundos antes del tercero, con
+parámetros fuera del código. El límite evita que un endpoint caído bloquee
+indefinidamente el proceso nocturno. El backoff reduce la presión sobre el
+servicio externo y da tiempo para que se recupere. La secuencia `1`, `2`, `4`
+y `8` solo aparecería si se configuraran cinco intentos totales.
 
 ### Procesar secuencialmente
 
@@ -189,3 +191,23 @@ Usé `config.toml` para la URL, timeout, número de intentos, backoff y rutas de
 salida. Esto permite cambiar valores operativos sin editar la lógica y hace
 más claro qué parte es configuración de ambiente y qué parte es regla del
 proceso.
+
+### Separar el estado por lote diario
+
+Decidí que la idempotencia debe aplicar al mismo lote, no al
+`account_id` global. El proceso se ejecuta cada día con un CSV nuevo y el
+sistema externo puede cambiar entre ejecuciones. Si la cuenta `7` se procesó
+hoy, no sería correcto reutilizar automáticamente ese resultado mañana solo
+porque el identificador es el mismo.
+
+Por eso la clave del estado es `(batch_id, account_id)`. El `batch_id` combina
+la fecha local y un hash corto del contenido del CSV. Esto permite relanzar el
+mismo archivo el mismo día sin repetir llamadas terminales, pero crea un lote
+nuevo al día siguiente o cuando cambia el contenido del archivo. El Excel se
+filtra por el lote actual y contiene únicamente las cuentas del CSV actual,
+mientras SQLite conserva el histórico de lotes para auditoría.
+
+Esta decisión evita dos errores opuestos: repetir llamadas dentro del mismo
+lote y, al mismo tiempo, usar datos viejos de un día anterior. También deja
+explícito en el runbook que no se debe borrar SQLite al relanzar, porque allí
+están tanto el punto de reanudación como el histórico.
