@@ -65,6 +65,8 @@ def fetch_post(
                 if response.status_code == 429
                 else None
             )
+            if delay is not None:
+                delay = min(delay, 60)
             sleep(delay if delay is not None else backoff_seconds * 2 ** (attempt - 1))
             continue
         if 400 <= response.status_code <= 499:

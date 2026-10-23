@@ -15,6 +15,30 @@ def test_input_is_normalized_and_deduplicated(tmp_path: Path) -> None:
     assert read_unique_ids(path) == ["7", "42", "abc"]
 
 
+def test_unicode_digit_is_invalid_and_does_not_call_api(tmp_path: Path) -> None:
+    input_path = tmp_path / "cuentas.csv"
+    input_path.write_text("id_cuenta\n²\n", encoding="utf-8")
+    config = Config(
+        base_url="https://example.test/posts",
+        timeout_seconds=1,
+        max_attempts=1,
+        backoff_seconds=0,
+        state_db=tmp_path / "state.db",
+        output_xlsx=tmp_path / "result.xlsx",
+        log_dir=tmp_path / "logs",
+        log_level="INFO",
+    )
+    connection = connect(config.state_db)
+    with patch("rpa_billing.processor.fetch_post") as fetch:
+        process(input_path, "batch", config, connection, logging.getLogger("test"))
+    fetch.assert_not_called()
+    row = connection.execute(
+        "SELECT status FROM accounts WHERE batch_id = 'batch' AND account_id = '²'"
+    ).fetchone()
+    assert row[0] == "INVALID_INPUT"
+    connection.close()
+
+
 def test_success_is_terminal(tmp_path: Path) -> None:
     connection = connect(tmp_path / "state.db")
     connection.execute(
@@ -121,4 +145,35 @@ def test_duplicate_appearances_are_saved_without_duplicate_calls(tmp_path: Path)
         "WHERE batch_id = 'batch' AND account_id = '7'"
     ).fetchone()
     assert row[0] == 3
+    connection.close()
+
+
+def test_leading_zeroes_are_one_logical_id(tmp_path: Path) -> None:
+    input_path = tmp_path / "cuentas.csv"
+    input_path.write_text("id_cuenta\n007\n7\n", encoding="utf-8")
+    config = Config(
+        base_url="https://example.test/posts",
+        timeout_seconds=1,
+        max_attempts=1,
+        backoff_seconds=0,
+        state_db=tmp_path / "state.db",
+        output_xlsx=tmp_path / "result.xlsx",
+        log_dir=tmp_path / "logs",
+        log_level="INFO",
+    )
+    connection = connect(config.state_db)
+    with patch(
+        "rpa_billing.processor.fetch_post",
+        return_value=ApiResult("SUCCESS", title="ok", attempts=1),
+    ) as fetch:
+        process(input_path, "batch", config, connection, logging.getLogger("test"))
+    fetch.assert_called_once_with(
+        config.base_url, 7, config.timeout_seconds,
+        config.max_attempts, config.backoff_seconds,
+    )
+    row = connection.execute(
+        "SELECT account_id, appearances FROM accounts "
+        "WHERE batch_id = 'batch'"
+    ).fetchone()
+    assert tuple(row) == ("7", 2)
     connection.close()

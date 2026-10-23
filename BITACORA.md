@@ -109,12 +109,19 @@ válida habría sido conservar cada ocurrencia del archivo.
 
 ### Conservar entradas inválidas como resultados auditables
 
-Los valores vacíos o no numéricos no se envían a la API, pero tampoco se
-descartan silenciosamente. Se registran como `INVALID_INPUT`, con una
-explicación en el estado y en el Excel. En un proceso nocturno de facturación
-es importante poder demostrar qué llegó en el CSV y por qué no se consultó,
-en lugar de que el total de entrada y el total reportado no coincidan sin
-explicación.
+Las filas con `id_cuenta` vacío o no numérico no se envían a la API, sino que
+se registran como `INVALID_INPUT`, con una explicación en el estado y en el
+Excel. Una línea completamente vacía es distinta: `csv.DictReader` la ignora
+porque no representa una fila con datos. En un proceso nocturno de facturación
+es importante distinguir ambas situaciones y documentar qué entradas llegaron
+realmente al procesamiento.
+
+También decidí aceptar únicamente dígitos ASCII para los IDs. `str.isdigit()`
+acepta algunos caracteres Unicode, como `²`, que luego `int()` no puede
+convertir; esa combinación podía producir un traceback y detener el lote.
+Con la validación ASCII, esos valores quedan como `INVALID_INPUT`. Además,
+normalicé ceros a la izquierda para que `007` y `7` sean el mismo ID lógico,
+evitando dos llamadas y conservando ambas apariciones para auditoría.
 
 ### Aceptar `0` como entero válido
 
@@ -150,17 +157,21 @@ solicitud no cambiaría la respuesta.
 
 Para `429`, además, se respeta el header `Retry-After` de la API. Si no está
 presente o no se puede interpretar, se aplica el backoff exponencial
-configurado. Así el cliente coopera con el límite de tráfico del servicio en
-lugar de reintentar de forma agresiva.
+configurado. Decidí limitar el valor respetado a 60 segundos: una API podría
+enviar `Retry-After: 3600`, pero dormir una hora por cada reintento bloquearía
+el proceso nocturno y retrasaría innecesariamente el resto de la operación.
+Así el cliente coopera con el límite de tráfico sin permitir una espera
+ilimitada.
 
 ### Usar SQLite como fuente de verdad
 
 Elegí SQLite en vez de usar el Excel como mecanismo de control. SQLite permite
 guardar el resultado de cada ID en una transacción independiente. Si el
 proceso se interrumpe, los IDs ya terminados quedan persistidos y se pueden
-omitir al relanzar. Además, una clave primaria sobre `account_id` impide
-duplicados. El Excel se considera un reporte reconstruible, no el estado
-operativo principal.
+omitir al relanzar. Además, una clave primaria compuesta por
+`(batch_id, account_id)` impide duplicados dentro del lote, pero permite que
+el mismo ID se procese nuevamente en un lote posterior. El Excel se considera
+un reporte reconstruible, no el estado operativo principal.
 
 ### Reconstruir el Excel desde el estado persistido
 

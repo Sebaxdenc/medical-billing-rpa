@@ -52,6 +52,20 @@ def test_429_uses_retry_after() -> None:
     assert sleeps == [7]
 
 
+def test_429_caps_retry_after_at_60_seconds() -> None:
+    first = response(429)
+    first.headers = {"Retry-After": "3600"}
+    sleeps: list[float] = []
+    with patch(
+        "rpa_billing.client.requests.get",
+        side_effect=[first, response(200, {"title": "ok"})],
+    ):
+        result = fetch_post("https://example.test/posts", 1, 1, 3, 1, sleeps.append)
+    assert result.status == "SUCCESS"
+    assert result.attempts == 2
+    assert sleeps == [60]
+
+
 def test_401_is_configuration_error_and_not_retried() -> None:
     with patch("rpa_billing.client.requests.get", return_value=response(401)) as get:
         result = fetch_post("https://example.test/posts", 1, 1, 3, 0)

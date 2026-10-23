@@ -43,8 +43,12 @@ con `python -m`.
 ## Entrada y configuración
 
 El archivo de entrada por defecto es `cuentas.csv` y debe tener una columna
-llamada `id_cuenta`. El lector tolera espacios alrededor del valor, comillas
-externas y líneas vacías.
+llamada `id_cuenta`. El lector tolera espacios alrededor del valor y comillas
+externas. Los enteros ASCII con ceros a la izquierda se normalizan (`007` y
+`7` representan el mismo ID). Las líneas totalmente vacías se ignoran; en
+cambio, una fila con
+`id_cuenta` vacío, incluso si viene entre comillas, se conserva como
+`INVALID_INPUT`.
 
 La configuración operativa está fuera del código, en `config.toml`:
 
@@ -103,9 +107,11 @@ pero queda marcado como una anomalía para revisión.
 
 ### IDs inválidos y cero
 
-Los valores vacíos o no numéricos se conservan como `INVALID_INPUT`, no se
-envían a la API y quedan registrados para auditoría. No se descartan
-silenciosamente.
+Las filas con `id_cuenta` vacío, no numérico o con dígitos Unicode no
+compatibles (por ejemplo, `²`) se conservan como `INVALID_INPUT`, no se envían
+a la API y quedan registradas para auditoría.
+Una línea completamente vacía del CSV es diferente: el lector la ignora
+porque no representa una fila con datos.
 
 Se aceptan todos los enteros no negativos, incluido `0`. El programa no
 inventa una regla que obligue a que una cuenta comience en `1`. Si `0` o
@@ -144,9 +150,11 @@ Un `408` puede ser transitorio porque el servidor no completó la solicitud a
 tiempo. Un `429` indica limitación de tráfico, por lo que también puede ser
 transitorio. Ambos se reintentan. Para `429`, si la respuesta contiene el
 header `Retry-After`, se respeta su valor; si no existe o no se puede
-interpretar, se usa el backoff exponencial configurado. Ante timeout de
-cliente, error de conexión o `5xx` tampoco se puede concluir si el recurso
-existe, por lo que sí tiene sentido reintentar.
+interpretar, se usa el backoff exponencial configurado. El valor de
+`Retry-After` tiene un tope de 60 segundos para evitar que una respuesta del
+servidor bloquee durante horas el proceso nocturno. Ante timeout de cliente,
+error de conexión o `5xx` tampoco se puede concluir si el recurso existe, por
+lo que sí tiene sentido reintentar.
 
 La política por defecto es de tres intentos totales, con dos esperas entre
 ellos: 1 segundo antes del segundo intento y 2 segundos antes del tercero.

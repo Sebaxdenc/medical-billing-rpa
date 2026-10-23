@@ -12,7 +12,10 @@ from .storage import TERMINAL_STATUSES, get, save
 
 
 def normalize(raw: str) -> str:
-    return raw.strip().strip('"').strip()
+    value = raw.strip().strip('"').strip()
+    if value.isascii() and value.isdigit():
+        return value.lstrip("0") or "0"
+    return value
 
 
 def read_unique_ids(path: Path) -> list[str]:
@@ -53,7 +56,7 @@ def process(
         if previous is not None and previous["status"] in TERMINAL_STATUSES:
             logger.info("Omitido %s: estado terminal %s", raw_id, previous["status"])
             continue
-        if not raw_id.isdigit():
+        if not (raw_id.isascii() and raw_id.isdigit()):
             save(connection, {
                 "batch_id": batch_id,
                 "account_id": raw_id, "appearances": appearances,
@@ -62,8 +65,20 @@ def process(
             })
             logger.warning("ID inválido: %r", raw_id)
             continue
+        try:
+            numeric_id = int(raw_id)
+        except ValueError:
+            save(connection, {
+                "batch_id": batch_id,
+                "account_id": raw_id, "appearances": appearances,
+                "status": "INVALID_INPUT", "title": "",
+                "body": "", "error": "El entero excede el límite soportado",
+                "attempts": 0,
+            })
+            logger.warning("ID inválido por longitud: %r", raw_id)
+            continue
         result = fetch_post(
-            config.base_url, int(raw_id), config.timeout_seconds,
+            config.base_url, numeric_id, config.timeout_seconds,
             config.max_attempts, config.backoff_seconds,
         )
         save(connection, {
